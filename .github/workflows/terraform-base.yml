@@ -1,0 +1,58 @@
+name: terraform-base
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "apply or destroy"
+        required: true
+        default: "apply"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: terraform-base
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init
+        working-directory: terraform/base
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
+            -backend-config="key=base/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Apply
+        if: ${{ github.event.inputs.action == 'apply' }}
+        working-directory: terraform/base
+        run: |
+          terraform apply -auto-approve \
+            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
+
+      - name: Destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        working-directory: terraform/base
+        run: |
+          terraform destroy -auto-approve \
+            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"

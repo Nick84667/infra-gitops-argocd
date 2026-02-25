@@ -1,0 +1,71 @@
+name: terraform-cleanup-total
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy-eks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init EKS
+        working-directory: terraform/eks
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
+            -backend-config="key=eks/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Destroy EKS
+        working-directory: terraform/eks
+        run: |
+          terraform destroy -auto-approve \
+            -var="vpc_id=${{ secrets.VPC_ID }}" \
+            -var='public_subnet_ids=${{ secrets.PUBLIC_SUBNET_IDS_JSON }}'
+
+  destroy-base:
+    needs: destroy-eks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init BASE
+        working-directory: terraform/base
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
+            -backend-config="key=base/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Destroy BASE
+        working-directory: terraform/base
+        run: |
+          terraform destroy -auto-approve \
+            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
