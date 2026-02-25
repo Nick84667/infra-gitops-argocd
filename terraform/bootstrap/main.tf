@@ -28,4 +28,5 @@ resource "aws_dynamodb_table" "lock" {
   attribute {
   name = "LockID"
   type = "S"
+  }
 }
