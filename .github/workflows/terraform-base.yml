@@ -30,11 +30,11 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
 
       - name: Init
-        working-directory: terraform/base
+        working-directory: terraform/base 
         run: |
-          terraform init \
+          terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
-            -backend-config="key=base/terraform.tfstate" \
+            -backend-config="key=terraform/base/terraform.tfstate" \
             -backend-config="region=eu-central-1" \
             -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
             -backend-config="encrypt=true"
