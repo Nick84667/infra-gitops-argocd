@@ -23,10 +23,11 @@ resource "aws_eks_cluster" "this" {
   role_arn = aws_iam_role.eks_cluster_role.arn
 
   vpc_config {
-    subnet_ids              = var.public_subnet_ids
-    endpoint_public_access  = true
-    endpoint_private_access = false
-  }
+  subnet_ids              = concat(var.public_subnet_ids, var.private_subnet_ids)
+  endpoint_public_access  = true
+  endpoint_private_access = true
+  public_access_cidrs     = [var.my_ip_cidr]
+}
 
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }
@@ -58,7 +59,7 @@ resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "ng-main"
   node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = var.public_subnet_ids
+  subnet_ids      = var.private_subnet_ids
   instance_types  = [var.node_instance_type]
 
   scaling_config {
