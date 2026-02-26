@@ -1,0 +1,6 @@
+# Terraform working directory 
+**/.terraform/
+
+# Terraform crash logs
+crash.log
+crash.*.log
