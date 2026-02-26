@@ -49,7 +49,7 @@ jobs:
           -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
  
 
-      - name: Apply
+      - name: apply
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: terraform/base
         run: |
