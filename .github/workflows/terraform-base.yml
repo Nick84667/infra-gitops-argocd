@@ -30,7 +30,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
 
       - name: Init
-        working-directory: terraform/base 
+        working-directory: terraform/base
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
@@ -38,18 +38,17 @@ jobs:
             -backend-config="region=eu-central-1" \
             -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
             -backend-config="encrypt=true"
-            
-      - name: Plan
-		if: ${{ github.event.inputs.action == 'apply' }}
-		working-directory: terraform/base
-		run: |
-		  terraform plan -out tfplan \
-		  -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
- 
 
-      - name: apply
+      - name: Plan
+        if: ${{ github.event.inputs.action == 'apply' }}
+        working-directory: terraform/base
+        run: |
+          terraform plan -out=tfplan \
+            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
+
+      - name: Apply (from plan)
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: terraform/base
         run: |
