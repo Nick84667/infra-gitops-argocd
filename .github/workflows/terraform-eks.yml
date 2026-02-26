@@ -32,20 +32,26 @@ jobs:
       - name: Init
         working-directory: terraform/eks
         run: |
-          terraform init \
+          terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
-            -backend-config="key=eks/terraform.tfstate" \
+            -backend-config="key=terraform/eks/terraform.tfstate" \
             -backend-config="region=eu-central-1" \
             -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
-      - name: Apply
+      - name: Plan
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: terraform/eks
         run: |
-          terraform apply -auto-approve \
+          terraform plan -out=tfplan \
             -var="vpc_id=${{ secrets.VPC_ID }}" \
             -var='public_subnet_ids=${{ secrets.PUBLIC_SUBNET_IDS_JSON }}'
+
+      - name: Apply 
+        if: ${{ github.event.inputs.action == 'apply' }}
+        working-directory: terraform/eks
+        run: |
+          terraform apply -auto-approve tfplan
 
       - name: Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
