@@ -21,21 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: hashicorp/setup-terraform@v3
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: eu-central-1
 
-      - uses: hashicorp/setup-terraform@v3
-
       - name: Terraform Format Check
         working-directory: terraform/base
         run: terraform fmt -check -recursive
-
-      - name: Terraform Validate
-        working-directory: terraform/base
-        run: terraform validate
 
       - name: Init
         working-directory: terraform/base
@@ -46,6 +42,10 @@ jobs:
             -backend-config="region=eu-central-1" \
             -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
             -backend-config="encrypt=true"
+
+      - name: Terraform Validate
+        working-directory: terraform/base
+        run: terraform validate
 
       - name: Plan
         if: ${{ github.event.inputs.action == 'apply' }}
