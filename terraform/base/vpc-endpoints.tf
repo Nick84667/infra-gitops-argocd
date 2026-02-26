@@ -47,10 +47,10 @@ locals {
 }
 
 resource "aws_vpc_endpoint" "iface" {
-  for_each           = local.interface_endpoints
-  vpc_id             = aws_vpc.this.id
-  service_name       = each.value
-  vpc_endpoint_type  = "Interface"
+  for_each          = local.interface_endpoints
+  vpc_id            = aws_vpc.this.id
+  service_name      = each.value
+  vpc_endpoint_type = "Interface"
 
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpce_sg.id]
