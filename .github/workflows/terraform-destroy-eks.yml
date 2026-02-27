@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug workspace
+        run: 
+          pwd
+          ls -la
+          echo "=== tree (depth 4) ==="
+          find . -maxdepth 4 -type d -print
+
       - name: Safety check
         run: |
           if [ "${{ inputs.confirm_destroy }}" != "DESTROY" ]; then
