@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       target_env:
-        description: "Ambiente da distruggere (dev|stage)"
+        description: "enviroment destroy (dev|stage)"
         required: true
         default: "dev"
       confirm_destroy:
-        description: "Scrivi DESTROY per confermare"
+        description: "write DESTROY to confirm"
         required: true
         default: "NO"
 
 permissions:
   contents: read
-  id-token: write  # necessario per OIDC [1](https://undercodetesting.com/secure-aws-authentication-with-oidc-for-github-actions/)[2](https://dev.to/aws-builders/securely-connect-github-actions-to-aws-using-iam-roles-and-oidc-4ek2)
+  id-token: write
 
 jobs:
   destroy:
@@ -26,19 +26,25 @@ jobs:
 
       - name: Debug workspace
         run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           pwd
           ls -la
           echo "=== tree (depth 4) ==="
           find . -maxdepth 4 -type d -print
 
-      - name: Check terraform/eks exists
+      - name: Locate terraform/eks folder
+        id: tfdir
         run: |
-          if [ ! -d "terraform/eks" ]; then
-            echo "ERRORE: directory terraform/eks non trovata."
-            echo "Contenuto repo:"
-            find . -maxdepth 3 -type d -print
+          if [ -d "terraform/eks" ]; then
+            echo "dir=terraform/eks" >> $GITHUB_OUTPUT
+          elif [ -d "infra-gitops-argocd/terraform/eks" ]; then
+            echo "dir=infra-gitops-argocd/terraform/eks" >> $GITHUB_OUTPUT
+          else
+            echo "ERRORE: non trovo terraform/eks nel workspace"
+            find . -maxdepth 6 -type d -print
             exit 1
           fi
+          echo "TF_DIR=${{ steps.tfdir.outputs.dir }}"
 
       - name: Safety check
         run: |
@@ -69,8 +75,8 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        working-directory: terraform/eks
         run: |
+          cd "${{ steps.tfdir.outputs.dir }}"
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
             -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
@@ -81,8 +87,8 @@ jobs:
           TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
       - name: Terraform Destroy
-        working-directory: terraform/eks
         run: |
+          cd "${{ steps.tfdir.outputs.dir }}"
           terraform destroy -auto-approve \
             -var="cluster_name=eks-lab-${{ inputs.target_env }}"
         env:
