@@ -97,10 +97,11 @@ jobs:
       - name: Terraform Apply
         working-directory: terraform/eks
         run: |
-          terraform apply -auto-approve \
+          terraform apply -input=false -auto-approve \
             -var="cluster_name=eks-lab-${{ steps.role.outputs.env }}"
         env:
-          TF_VAR_region: eu-central-1
-          TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
-          TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
-          TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
+           TF_VAR_region: eu-central-1
+           TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
+           TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
+           TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
+           TF_VAR_my_ip_cidr:         ${{ secrets.MY_IP_CIDR }}
