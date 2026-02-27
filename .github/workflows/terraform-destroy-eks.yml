@@ -14,7 +14,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  id-token: write  # necessario per OIDC [1](https://undercodetesting.com/secure-aws-authentication-with-oidc-for-github-actions/)[2](https://dev.to/aws-builders/securely-connect-github-actions-to-aws-using-iam-roles-and-oidc-4ek2)
 
 jobs:
   destroy:
@@ -25,11 +25,20 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Debug workspace
-        run: 
+        run: |
           pwd
           ls -la
           echo "=== tree (depth 4) ==="
           find . -maxdepth 4 -type d -print
+
+      - name: Check terraform/eks exists
+        run: |
+          if [ ! -d "terraform/eks" ]; then
+            echo "ERRORE: directory terraform/eks non trovata."
+            echo "Contenuto repo:"
+            find . -maxdepth 3 -type d -print
+            exit 1
+          fi
 
       - name: Safety check
         run: |
@@ -60,7 +69,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        working-directory: infra-gitops-argocd/terraform/eks
+        working-directory: terraform/eks
         run: |
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
@@ -72,7 +81,7 @@ jobs:
           TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
       - name: Terraform Destroy
-        working-directory: infra-gitops-argocd/terraform/eks
+        working-directory: terraform/eks
         run: |
           terraform destroy -auto-approve \
             -var="cluster_name=eks-lab-${{ inputs.target_env }}"
