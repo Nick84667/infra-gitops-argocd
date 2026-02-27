@@ -1,0 +1,61 @@
+name: terraform-unlock
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: "Ambiente (dev|stage)"
+        required: true
+        default: "dev"
+      lock_id:
+        description: "Lock ID da sbloccare (UUID)"
+        required: true
+      confirm:
+        description: "Scrivi UNLOCK per confermare"
+        required: true
+        default: "NO"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  unlock:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target_env }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Safety check
+        run: |
+          if [ "${{ inputs.confirm }}" != "UNLOCK" ]; then
+            echo "Conferma mancante. Metti confirm=UNLOCK"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.target_env == 'stage' && secrets.AWS_ROLE_EKS_STAGE || secrets.AWS_ROLE_EKS_DEV }}
+          aws-region: eu-central-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Init backend
+        run: |
+          cd terraform/eks
+          terraform init \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
+            -backend-config="key=eks/${{ inputs.target_env }}/terraform.tfstate" \
+            -backend-config="region=eu-central-1"
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
+
+      - name: Force unlock
+        run: |
+          cd terraform/eks
+          terraform force-unlock -force "${{ inputs.lock_id }}"
