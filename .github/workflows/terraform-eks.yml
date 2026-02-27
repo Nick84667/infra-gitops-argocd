@@ -17,71 +17,42 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
+
+    # stage quando push su main, altrimenti usa input
     environment: ${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
-    
+
+    # evita 2 apply contemporanei sullo stesso state (dev/stage)
     concurrency:
-      group: terraform-eks-${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
+      group: tfstate-eks-${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
       cancel-in-progress: false
-     
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Debug workspace
-        run: |
-          pwd
-          ls -la
-          echo "=== tree (depth 4) ==="
-          find . -maxdepth 4 -type d -print
-
-      - name: Select role
-        id: role
+      - name: Select role/env
+        id: sel
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
             echo "env=stage" >> $GITHUB_OUTPUT
+            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
           else
             if [ "${{ inputs.target_env }}" = "stage" ]; then
-              echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
               echo "env=stage" >> $GITHUB_OUTPUT
+              echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
             else
-              echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
               echo "env=dev" >> $GITHUB_OUTPUT
+              echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
             fi
           fi
-
-      - name: Show selected values
-        run: |
-          echo "Selected env: ${{ steps.role.outputs.env }}"
-          echo "Selected role: ${{ steps.role.outputs.role }}"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ steps.role.outputs.role }}
+          role-to-assume: ${{ steps.sel.outputs.role }}
           aws-region: eu-central-1
 
       - name: Verify identity
         run: aws sts get-caller-identity
-
-      - name: Show backend targets
-        run: |
-         echo "TFSTATE_BUCKET=$TFSTATE_BUCKET"
-         echo "TFLOCK_TABLE=$TFLOCK_TABLE"
-         aws s3api get-bucket-location --bucket "$TFSTATE_BUCKET"
-        env:
-          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
-          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
-          
-      - name: Test S3 state access
-        run: |
-         aws s3api head-object \
-            --bucket tfstate-eks-lab-nick84667-eu-central-1 \
-            --key "eks/${{ steps.role.outputs.env }}/terraform.tfstate" || true
-          aws s3api list-objects-v2 \
-            --bucket tfstate-eks-lab-nick84667-eu-central-1 \
-            --prefix "eks/${{ steps.role.outputs.env }}/" \
-            --max-keys 5 || true
-
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -92,7 +63,7 @@ jobs:
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
             -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
-            -backend-config="key=eks/${{ steps.role.outputs.env }}/terraform.tfstate" \
+            -backend-config="key=eks/${{ steps.sel.outputs.env }}/terraform.tfstate" \
             -backend-config="region=eu-central-1"
         env:
           TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
@@ -101,11 +72,11 @@ jobs:
       - name: Terraform Apply
         working-directory: terraform/eks
         run: |
-          terraform apply -input=false -auto-approve \
-            -var="cluster_name=eks-lab-${{ steps.role.outputs.env }}"
+          terraform apply -lock-timeout=10m -input=false -auto-approve \
+            -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
         env:
-           TF_VAR_region: eu-central-1
-           TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
-           TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
-           TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
-           TF_VAR_my_ip_cidr:         ${{ secrets.MY_IP_CIDR }}
+          TF_VAR_region: eu-central-1
+          TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
+          TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
+          TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
+          TF_VAR_my_ip_cidr:         ${{ secrets.MY_IP_CIDR }}
