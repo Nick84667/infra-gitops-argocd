@@ -59,6 +59,15 @@ jobs:
       - name: Verify identity
         run: aws sts get-caller-identity
 
+      - name: Show backend targets
+        run: |
+         echo "TFSTATE_BUCKET=$TFSTATE_BUCKET"
+         echo "TFLOCK_TABLE=$TFLOCK_TABLE"
+         aws s3api get-bucket-location --bucket "$TFSTATE_BUCKET"
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
+          
       - name: Test S3 state access
         run: |
          aws s3api head-object \
