@@ -8,7 +8,7 @@ on:
         required: true
         default: "dev"
   push:
-    branches: ["main"]   # promozione automatica stage su main
+    branches: ["main"]
 
 permissions:
   contents: read
@@ -17,19 +17,18 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    # push su main => stage, altrimenti usa input
     environment: ${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Debug workspace
-        run: 
+        run: |
           pwd
           ls -la
           echo "=== tree (depth 4) ==="
           find . -maxdepth 4 -type d -print
-          
+
       - name: Select role
         id: role
         run: |
@@ -46,6 +45,11 @@ jobs:
             fi
           fi
 
+      - name: Show selected values
+        run: |
+          echo "Selected env: ${{ steps.role.outputs.env }}"
+          echo "Selected role: ${{ steps.role.outputs.role }}"
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -55,11 +59,22 @@ jobs:
       - name: Verify identity
         run: aws sts get-caller-identity
 
+      - name: Test S3 state access
+        run: |
+         aws s3api head-object \
+            --bucket tfstate-eks-lab-nick84667-eu-central-1 \
+            --key "eks/${{ steps.role.outputs.env }}/terraform.tfstate" || true
+          aws s3api list-objects-v2 \
+            --bucket tfstate-eks-lab-nick84667-eu-central-1 \
+            --prefix "eks/${{ steps.role.outputs.env }}/" \
+            --max-keys 5 || true
+
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        working-directory: infra-gitops-argocd/terraform/eks
+        working-directory: terraform/eks
         run: |
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
@@ -71,7 +86,7 @@ jobs:
           TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
       - name: Terraform Apply
-        working-directory: infra-gitops-argocd/terraform/eks
+        working-directory: terraform/eks
         run: |
           terraform apply -auto-approve \
             -var="cluster_name=eks-lab-${{ steps.role.outputs.env }}"
