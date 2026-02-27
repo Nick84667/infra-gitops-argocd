@@ -68,10 +68,11 @@ resource "aws_eks_node_group" "this" {
     min_size     = 1
     max_size     = 2
   }
+
+  depends_on = [aws_iam_role_policy_attachment.node_policies]
+}
+
 resource "aws_cloudwatch_log_group" "eks_cluster" {
   name              = "/aws/eks/${var.cluster_name}/cluster"
   retention_in_days = 3
-}
-  
-  depends_on = [aws_iam_role_policy_attachment.node_policies]
 }
