@@ -18,7 +18,11 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
-
+    
+    concurrency:
+      group: terraform-eks-${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
+      cancel-in-progress: false
+     
     steps:
       - uses: actions/checkout@v4
 
