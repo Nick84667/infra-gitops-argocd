@@ -1,72 +1,96 @@
-name: terraform-base
+name: terraform-eks
 
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: "apply or destroy"
+      target_env:
+        description: "Ambiente (dev|stage)"
         required: true
-        default: "apply"
+        default: "dev"
+  push:
+    branches: ["main"]
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 jobs:
-  run:
+  apply:
     runs-on: ubuntu-latest
-    concurrency:
-      group: terraform-base
-      cancel-in-progress: true
+    environment: ${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Debug workspace
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          pwd
+          ls -la
+          echo "=== tree (depth 4) ==="
+          find . -maxdepth 4 -type d -print
+
+      - name: Locate terraform/eks folder
+        id: tfdir
+        run: |
+          if [ -d "terraform/eks" ]; then
+            echo "dir=terraform/eks" >> $GITHUB_OUTPUT
+          elif [ -d "infra-gitops-argocd/terraform/eks" ]; then
+            echo "dir=infra-gitops-argocd/terraform/eks" >> $GITHUB_OUTPUT
+          else
+            echo "ERRORE: non trovo terraform/eks nel workspace"
+            find . -maxdepth 6 -type d -print
+            exit 1
+          fi
+          echo "TF_DIR=${{ steps.tfdir.outputs.dir }}"
+
+      - name: Select role/env
+        id: sel
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "env=stage" >> $GITHUB_OUTPUT
+            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+          else
+            if [ "${{ inputs.target_env }}" = "stage" ]; then
+              echo "env=stage" >> $GITHUB_OUTPUT
+              echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+            else
+              echo "env=dev" >> $GITHUB_OUTPUT
+              echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
+            fi
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ steps.sel.outputs.role }}
           aws-region: eu-central-1
 
-      - name: Terraform Format Check
-        working-directory: terraform/base
-        run: terraform fmt -check -recursive
+      - name: Verify identity
+        run: aws sts get-caller-identity
 
-      - name: Init
-        working-directory: terraform/base
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
         run: |
-          terraform init -reconfigure \
-            -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
-            -backend-config="key=terraform/base/terraform.tfstate" \
-            -backend-config="region=eu-central-1" \
-            -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
-            -backend-config="encrypt=true"
+          cd "${{ steps.tfdir.outputs.dir }}"
+          terraform init \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
+            -backend-config="key=eks/${{ steps.sel.outputs.env }}/terraform.tfstate" \
+            -backend-config="region=eu-central-1"
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
-      - name: Terraform Validate
-        working-directory: terraform/base
-        run: terraform validate
-
-      - name: Plan
-        if: ${{ github.event.inputs.action == 'apply' }}
-        working-directory: terraform/base
+      - name: Terraform Apply
         run: |
-          terraform plan -out=tfplan \
-            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
-
-      - name: Apply (from plan)
-        if: ${{ github.event.inputs.action == 'apply' }}
-        working-directory: terraform/base
-        run: |
-          terraform apply -auto-approve tfplan
-
-      - name: Destroy
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        working-directory: terraform/base
-        run: |
-          terraform destroy -auto-approve \
-            -var="my_ip_cidr=${{ secrets.MY_IP_CIDR }}" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="oidc_provider_arn=${{ secrets.OIDC_PROVIDER_ARN }}"
+          cd "${{ steps.tfdir.outputs.dir }}"
+          terraform apply -auto-approve \
+            -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
+        env:
+          TF_VAR_region: eu-central-1
+          TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
+          TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
+          TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
