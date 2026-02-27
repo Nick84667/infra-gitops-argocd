@@ -3,68 +3,73 @@ name: terraform-eks
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: "apply or destroy"
+      target_env:
+        description: "Ambiente (dev|stage)"
         required: true
-        default: "apply"
+        default: "dev"
+  push:
+    branches: ["main"]   # promozione automatica stage su main
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 jobs:
-  run:
+  apply:
     runs-on: ubuntu-latest
-    concurrency:
-      group: terraform-eks
-      cancel-in-progress: true
+    # push su main => stage, altrimenti usa input
+    environment: ${{ github.event_name == 'push' && 'stage' || inputs.target_env }}
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select role
+        id: role
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+            echo "env=stage" >> $GITHUB_OUTPUT
+          else
+            if [ "${{ inputs.target_env }}" = "stage" ]; then
+              echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+              echo "env=stage" >> $GITHUB_OUTPUT
+            else
+              echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
+              echo "env=dev" >> $GITHUB_OUTPUT
+            fi
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ steps.role.outputs.role }}
           aws-region: eu-central-1
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Verify identity
+        run: aws sts get-caller-identity
 
-      - name: Terraform Format Check
-        working-directory: terraform/base
-        run: terraform fmt -check -recursive
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Validate
-        working-directory: terraform/base
-        run: terraform validate
-
-      - name: Init
-        working-directory: terraform/eks
+      - name: Terraform Init
+        working-directory: infra-gitops-argocd/terraform/eks
         run: |
-          terraform init -reconfigure \
-            -backend-config="bucket=${{ secrets.TFSTATE_BUCKET }}" \
-            -backend-config="key=terraform/eks/terraform.tfstate" \
-            -backend-config="region=eu-central-1" \
-            -backend-config="dynamodb_table=${{ secrets.TFLOCK_TABLE }}" \
-            -backend-config="encrypt=true"
+          terraform init \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
+            -backend-config="key=eks/${{ steps.role.outputs.env }}/terraform.tfstate" \
+            -backend-config="region=eu-central-1"
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
-      - name: Plan
-        if: ${{ github.event.inputs.action == 'apply' }}
-        working-directory: terraform/eks
+      - name: Terraform Apply
+        working-directory: infra-gitops-argocd/terraform/eks
         run: |
-          terraform plan -out=tfplan \
-            -var="vpc_id=${{ secrets.VPC_ID }}" \
-            -var='public_subnet_ids=${{ secrets.PUBLIC_SUBNET_IDS_JSON }}'
-
-      - name: Apply 
-        if: ${{ github.event.inputs.action == 'apply' }}
-        working-directory: terraform/eks
-        run: |
-          terraform apply -auto-approve tfplan
-
-      - name: Destroy
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        working-directory: terraform/eks
-        run: |
-          terraform destroy -auto-approve \
-            -var="vpc_id=${{ secrets.VPC_ID }}" \
-            -var='public_subnet_ids=${{ secrets.PUBLIC_SUBNET_IDS_JSON }}'
+          terraform apply -auto-approve \
+            -var="cluster_name=eks-lab-${{ steps.role.outputs.env }}"
+        env:
+          TF_VAR_region: eu-central-1
+          TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
+          TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
+          TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
