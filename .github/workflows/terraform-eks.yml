@@ -57,6 +57,12 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Pre-check required inputs
+        run: |
+         test -n "${{ secrets.MY_IP_CIDR }}" || (echo "MY_IP_CIDR mancante nell'environment (${ { steps.sel.outputs.env } })" && exit 1)
+         test -n "${{ secrets.PRIVATE_SUBNET_IDS }}" || (echo "PRIVATE_SUBNET_IDS vuoto/mancante" && exit 1)
+         test -n "${{ secrets.PUBLIC_SUBNET_IDS }}" || (echo "PUBLIC_SUBNET_IDS vuoto/mancante" && exit 1)
+
       - name: Terraform Init
         working-directory: terraform/eks
         run: |
@@ -73,7 +79,7 @@ jobs:
         working-directory: terraform/eks
         run: |
           terraform apply -lock-timeout=10m -input=false -auto-approve \
-            -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
+          -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
         env:
           TF_VAR_region: eu-central-1
           TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
