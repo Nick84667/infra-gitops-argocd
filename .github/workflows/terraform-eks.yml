@@ -22,7 +22,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
+      
+      - name: Debug workspace
+        run: 
+          pwd
+          ls -la
+          echo "=== tree (depth 4) ==="
+          find . -maxdepth 4 -type d -print
+          
       - name: Select role
         id: role
         run: |
