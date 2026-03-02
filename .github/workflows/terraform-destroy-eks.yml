@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.target_env }}
 
-    # evita collisioni destroy/apply sullo stesso env
     concurrency:
       group: tfstate-eks-${{ inputs.target_env }}
       cancel-in-progress: false
@@ -36,14 +35,17 @@ jobs:
             exit 1
           fi
 
-      - name: Select role
+      - name: Select role/env
         id: sel
         run: |
-          if [ "${{ inputs.target_env }}" = "stage" ]; then
-            echo "env=stage" >> $GITHUB_OUTPUT
+          ENV="${{ inputs.target_env }}"
+          echo "env=${ENV}" >> $GITHUB_OUTPUT
+          echo "cluster=eks-lab-${ENV}" >> $GITHUB_OUTPUT
+          echo "tfstate_key=eks/${ENV}/terraform.tfstate" >> $GITHUB_OUTPUT
+
+          if [ "${ENV}" = "stage" ]; then
             echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
           else
-            echo "env=dev" >> $GITHUB_OUTPUT
             echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
           fi
 
@@ -59,26 +61,34 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Pre-check required inputs
+        run: |
+          ENV="${{ steps.sel.outputs.env }}"
+          test -n "${{ secrets.TFSTATE_BUCKET }}"     || (echo "TFSTATE_BUCKET mancante (${ENV})" && exit 1)
+          test -n "${{ secrets.TFLOCK_TABLE }}"       || (echo "TFLOCK_TABLE mancante (${ENV})" && exit 1)
+          test -n "${{ secrets.VPC_ID }}"             || (echo "VPC_ID mancante (${ENV})" && exit 1)
+          test -n "${{ secrets.PRIVATE_SUBNET_IDS }}" || (echo "PRIVATE_SUBNET_IDS vuoto/mancante (${ENV})" && exit 1)
+          test -n "${{ secrets.PUBLIC_SUBNET_IDS }}"  || (echo "PUBLIC_SUBNET_IDS vuoto/mancante (${ENV})" && exit 1)
+
       - name: Terraform Init
         working-directory: terraform/eks
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
         run: |
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
             -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
-            -backend-config="key=eks/${{ steps.sel.outputs.env }}/terraform.tfstate" \
+            -backend-config="key=${{ steps.sel.outputs.tfstate_key }}" \
             -backend-config="region=eu-central-1"
-        env:
-          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
-          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
       - name: Terraform Destroy
         working-directory: terraform/eks
-        run: |
-          terraform destroy -lock-timeout=10m -input=false -auto-approve \
-            -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
         env:
           TF_VAR_region: eu-central-1
           TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
           TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
           TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
-          TF_VAR_my_ip_cidr:         ${{ secrets.MY_IP_CIDR }}
+        run: |
+          terraform destroy -lock-timeout=10m -input=false -auto-approve \
+            -var="cluster_name=${{ steps.sel.outputs.cluster }}"
