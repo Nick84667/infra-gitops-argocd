@@ -33,16 +33,23 @@ jobs:
         id: sel
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "env=stage" >> $GITHUB_OUTPUT
-            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+            ENV="stage"
           else
             if [ "${{ inputs.target_env }}" = "stage" ]; then
-              echo "env=stage" >> $GITHUB_OUTPUT
-              echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+              ENV="stage"
             else
-              echo "env=dev" >> $GITHUB_OUTPUT
-              echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
+              ENV="dev"
             fi
+          fi
+
+          echo "env=${ENV}" >> $GITHUB_OUTPUT
+          echo "cluster=eks-lab-${ENV}" >> $GITHUB_OUTPUT
+          echo "tfstate_key=eks/${ENV}/terraform.tfstate" >> $GITHUB_OUTPUT
+
+          if [ "${ENV}" = "stage" ]; then
+            echo "role=${{ secrets.AWS_ROLE_EKS_STAGE }}" >> $GITHUB_OUTPUT
+          else
+            echo "role=${{ secrets.AWS_ROLE_EKS_DEV }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Configure AWS credentials (OIDC)
@@ -59,30 +66,67 @@ jobs:
 
       - name: Pre-check required inputs
         run: |
-         test -n "${{ secrets.MY_IP_CIDR }}" || (echo "MY_IP_CIDR mancante nell'environment (${ { steps.sel.outputs.env } })" && exit 1)
-         test -n "${{ secrets.PRIVATE_SUBNET_IDS }}" || (echo "PRIVATE_SUBNET_IDS vuoto/mancante" && exit 1)
-         test -n "${{ secrets.PUBLIC_SUBNET_IDS }}" || (echo "PUBLIC_SUBNET_IDS vuoto/mancante" && exit 1)
+          ENV="${{ steps.sel.outputs.env }}"
+
+          test -n "${{ secrets.TFSTATE_BUCKET }}"     || (echo "TFSTATE_BUCKET mancante nell'environment (${ENV})" && exit 1)
+          test -n "${{ secrets.TFLOCK_TABLE }}"       || (echo "TFLOCK_TABLE mancante nell'environment (${ENV})" && exit 1)
+          test -n "${{ secrets.VPC_ID }}"             || (echo "VPC_ID mancante nell'environment (${ENV})" && exit 1)
+          test -n "${{ secrets.PRIVATE_SUBNET_IDS }}" || (echo "PRIVATE_SUBNET_IDS vuoto/mancante nell'environment (${ENV})" && exit 1)
+          test -n "${{ secrets.PUBLIC_SUBNET_IDS }}"  || (echo "PUBLIC_SUBNET_IDS vuoto/mancante nell'environment (${ENV})" && exit 1)
+
+          # se nel modulo EKS usi public_access_cidrs = [var.my_ip_cidr], questo deve esserci
+          test -n "${{ secrets.MY_IP_CIDR }}"         || (echo "MY_IP_CIDR mancante nell'environment (${ENV})" && exit 1)
+
+          # SSH bastion (host/user tipicamente repo secrets, key è environment secret dev/stage)
+          test -n "${{ secrets.BASTION_HOST }}"       || (echo "BASTION_HOST mancante (repo secret consigliato)" && exit 1)
+          test -n "${{ secrets.BASTION_USER }}"       || (echo "BASTION_USER mancante (repo secret consigliato)" && exit 1)
+          test -n "${{ secrets.BASTION_SSH_PRIVATE_KEY }}" || (echo "BASTION_SSH_PRIVATE_KEY mancante nell'environment (${ENV})" && exit 1)
 
       - name: Terraform Init
         working-directory: terraform/eks
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
+          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
         run: |
           terraform init \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
             -backend-config="dynamodb_table=${TFLOCK_TABLE}" \
-            -backend-config="key=eks/${{ steps.sel.outputs.env }}/terraform.tfstate" \
+            -backend-config="key=${{ steps.sel.outputs.tfstate_key }}" \
             -backend-config="region=eu-central-1"
-        env:
-          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
-          TFLOCK_TABLE:  ${{ secrets.TFLOCK_TABLE }}
 
       - name: Terraform Apply
         working-directory: terraform/eks
-        run: |
-          terraform apply -lock-timeout=10m -input=false -auto-approve \
-          -var="cluster_name=eks-lab-${{ steps.sel.outputs.env }}"
         env:
           TF_VAR_region: eu-central-1
           TF_VAR_vpc_id:             ${{ secrets.VPC_ID }}
           TF_VAR_private_subnet_ids: ${{ secrets.PRIVATE_SUBNET_IDS }}
           TF_VAR_public_subnet_ids:  ${{ secrets.PUBLIC_SUBNET_IDS }}
           TF_VAR_my_ip_cidr:         ${{ secrets.MY_IP_CIDR }}
+        run: |
+          terraform apply -lock-timeout=10m -input=false -auto-approve \
+            -var="cluster_name=${{ steps.sel.outputs.cluster }}"
+
+      # --- SSH + kubectl on bastion (post-apply) ---
+      - name: Setup SSH (bastion)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BASTION_SSH_PRIVATE_KEY }}" > ~/.ssh/id_key
+          chmod 600 ~/.ssh/id_key
+          ssh-keyscan -H "${{ secrets.BASTION_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: kubectl from bastion
+        run: |
+          ssh -i ~/.ssh/id_key "${{ secrets.BASTION_USER }}@${{ secrets.BASTION_HOST }}" << 'EOF'
+            set -euo pipefail
+
+            CLUSTER_NAME="${{ steps.sel.outputs.cluster }}"
+            REGION="eu-central-1"
+
+            # sanity check tools
+            command -v aws >/dev/null 2>&1 || { echo "AWS CLI missing on bastion"; exit 1; }
+            command -v kubectl >/dev/null 2>&1 || { echo "kubectl missing on bastion"; exit 1; }
+
+            aws eks update-kubeconfig --region "${REGION}" --name "${CLUSTER_NAME}"
+            kubectl get nodes -o wide
+            kubectl get pods -A
+          EOF
